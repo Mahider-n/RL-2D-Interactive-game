@@ -26,6 +26,12 @@ class Action(IntEnum):
     STABILIZE = 4
     WAIT = 5
 
+MOVE_ACTIONS = {
+    Action.MOVE_UP,
+    Action.MOVE_DOWN,
+    Action.MOVE_LEFT,
+    Action.MOVE_RIGHT,
+}
 
 @dataclass
 class Cell:
@@ -52,6 +58,21 @@ class RewardVector:
         return (self.signal_collection + self.hazard_damage + self.time_cost + 
                 self.stabilization + self.exploration)
 
+class WeightedRewardWrapper(gym.Wrapper):
+    def __init__(self, env, weights):
+        super().__init__(env)
+        self.weights = weights
+
+    def step(self, action):
+        obs, _, terminated, truncated, info = self.env.step(action)
+
+        reward = sum(
+            self.weights[k] * v
+            for k, v in info["reward_vector"].items()
+            if k in self.weights
+        )
+
+        return obs, reward, terminated, truncated, info
 
 class GameEngine:
     """Core engine managing The Last Signal game logic."""
@@ -68,6 +89,8 @@ class GameEngine:
         self.time_remaining = config.time_budget
         self.episode_step = 0
         self.visited_cells = set()
+        self.energy = config.max_energy
+
         
         # Initialize world
         self._generate_world()
@@ -130,6 +153,19 @@ class GameEngine:
         self.time_remaining -= 1
         reward = RewardVector()
         
+# -------- ENERGY DYNAMICS --------
+        if action in MOVE_ACTIONS:
+            self.energy -= self.config.energy_move_cost
+
+        elif action == Action.STABILIZE:
+            self.energy -= self.config.energy_stabilize_cost
+
+        elif action == Action.WAIT:
+            self.energy = min(
+                self.config.max_energy,
+                self.energy + self.config.energy_wait_recovery
+            )
+
         # Handle movement actions
         new_x, new_y = self.agent_x, self.agent_y
         
@@ -169,7 +205,10 @@ class GameEngine:
         # Apply hazard damage
         damage = self._apply_hazard()
         reward.hazard_damage = damage * self.config.hazard_damage_penalty
-        
+        # Energy penalty if exhausted
+        if self.energy <= 0:
+            reward.energy_penalty = self.config.low_energy_penalty
+
         # Apply time penalty
         reward.time_cost = self.config.time_penalty_per_step
         
@@ -229,6 +268,8 @@ class GameEngine:
             self.agent_y / self.config.grid_height,
             self.health / self.config.max_health,
             self.time_remaining / self.config.time_budget,
+            self.energy / self.config.max_energy
+
         ], dtype=np.float32)
         
         # Combine observations
@@ -266,3 +307,4 @@ class GameEngine:
                     print(".", end=" ")
             print()
         print("=" * 60)
+   
