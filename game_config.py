@@ -44,11 +44,15 @@ class GameConfig:
     
     # Seed
     seed: int = None
-
-    # new state variable energy system, energy efficiency reward 
     
+    # Agent energy
+    initial_energy: int = 100
     max_energy: int = 100
+
+    # Energy costs
     energy_move_cost: int = 1
-    energy_stabilize_cost: int = 2
-    energy_wait_recovery: int = 1
-    low_energy_penalty: float = -0.5
+    energy_stabilize_cost: int = 3
+    energy_wait_recovery: int = 2
+
+    # Energy reward / penalty
+    energy_depletion_penalty: float = -0.5

@@ -248,6 +248,7 @@ class GameRenderer:
             f"Position: ({self.game.agent_x}, {self.game.agent_y})",
             f"Signals: {sum(1 for y in range(self.game.config.grid_height) for x in range(self.game.config.grid_width) if self.game.grid[y][x].signal_collected)}/{self.game.config.num_signals}",
             f"Visited: {len(self.game.visited_cells)} cells",
+            f"Energy: {self.game.energy}/{self.game.config.max_energy}",  
             "",
             "Actions:",
             "↑/↓/←/→ = Move",

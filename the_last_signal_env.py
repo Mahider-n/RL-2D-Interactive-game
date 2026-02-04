@@ -65,8 +65,9 @@ class TheLastSignalEnv(gym.Env):
         radius = config.observation_radius
         obs_size = 2 * radius + 1
         local_map_size = obs_size * obs_size * 3  # 7x7x3 = 147
-        agent_state_size = 4  # x, y, health, time
+        agent_state_size = 5  # x, y, health, time
         total_obs_size = local_map_size + agent_state_size
+        
         
         # Define observation space
         self.observation_space = spaces.Box(
@@ -151,6 +152,7 @@ class TheLastSignalEnv(gym.Env):
             "time_cost": float(reward_vector.time_cost),
             "stabilization": float(reward_vector.stabilization),
             "exploration": float(reward_vector.exploration),
+            "energy": float(reward_vector.energy),
         }
         
         if self.render_mode == "human":

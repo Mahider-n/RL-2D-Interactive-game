@@ -26,12 +26,11 @@ class Action(IntEnum):
     STABILIZE = 4
     WAIT = 5
 
-MOVE_ACTIONS = {
-    Action.MOVE_UP,
-    Action.MOVE_DOWN,
-    Action.MOVE_LEFT,
-    Action.MOVE_RIGHT,
-}
+class HighLevelGoal(IntEnum):
+    SURVIVE = 0
+    COLLECT = 1
+    STABILIZE = 2
+    RECOVER_ENERGY = 3
 
 @dataclass
 class Cell:
@@ -51,28 +50,14 @@ class RewardVector:
     time_cost: float = 0.0
     stabilization: float = 0.0
     exploration: float = 0.0
+    energy: float = 0.0 
     
     @property
     def total(self) -> float:
         """Compute scalar reward (can be overridden for different objectives)."""
         return (self.signal_collection + self.hazard_damage + self.time_cost + 
-                self.stabilization + self.exploration)
+                self.stabilization + self.exploration + self.energy)
 
-class WeightedRewardWrapper(gym.Wrapper):
-    def __init__(self, env, weights):
-        super().__init__(env)
-        self.weights = weights
-
-    def step(self, action):
-        obs, _, terminated, truncated, info = self.env.step(action)
-
-        reward = sum(
-            self.weights[k] * v
-            for k, v in info["reward_vector"].items()
-            if k in self.weights
-        )
-
-        return obs, reward, terminated, truncated, info
 
 class GameEngine:
     """Core engine managing The Last Signal game logic."""
@@ -89,7 +74,9 @@ class GameEngine:
         self.time_remaining = config.time_budget
         self.episode_step = 0
         self.visited_cells = set()
-        self.energy = config.max_energy
+        self.energy = config.initial_energy
+        self.current_goal = HighLevelGoal.COLLECT
+
 
         
         # Initialize world
@@ -138,6 +125,24 @@ class GameEngine:
             self.health = max(0, self.health - damage)
         
         return float(damage)
+    def select_high_level_goal(self) -> HighLevelGoal:
+        if self.health < 0.3 * self.config.max_health:
+            return HighLevelGoal.SURVIVE
+
+        if self.energy < 0.2 * self.config.max_energy:
+            return HighLevelGoal.RECOVER_ENERGY
+
+        remaining_signals = sum(
+            1 for y in range(self.config.grid_height)
+              for x in range(self.config.grid_width)
+              if self.grid[y][x].has_signal and not self.grid[y][x].signal_collected
+        )
+
+        if remaining_signals > 0:
+            return HighLevelGoal.COLLECT
+
+        return HighLevelGoal.STABILIZE
+
     
     def step(self, action: Action) -> Tuple[np.ndarray, RewardVector, bool, Dict]:
         """
@@ -153,19 +158,6 @@ class GameEngine:
         self.time_remaining -= 1
         reward = RewardVector()
         
-# -------- ENERGY DYNAMICS --------
-        if action in MOVE_ACTIONS:
-            self.energy -= self.config.energy_move_cost
-
-        elif action == Action.STABILIZE:
-            self.energy -= self.config.energy_stabilize_cost
-
-        elif action == Action.WAIT:
-            self.energy = min(
-                self.config.max_energy,
-                self.energy + self.config.energy_wait_recovery
-            )
-
         # Handle movement actions
         new_x, new_y = self.agent_x, self.agent_y
         
@@ -186,7 +178,28 @@ class GameEngine:
         elif action == Action.WAIT:
             # No movement
             pass
-        
+        # energy dynamics 
+        if action in (
+            Action.MOVE_UP,
+            Action.MOVE_DOWN,
+            Action.MOVE_LEFT,
+            Action.MOVE_RIGHT,
+        ):
+            self.energy -= self.config.energy_move_cost
+
+        elif action == Action.STABILIZE:
+            self.energy -= self.config.energy_stabilize_cost
+
+        elif action == Action.WAIT:
+            self.energy = min(
+                self.config.max_energy,
+                self.energy + self.config.energy_wait_recovery
+            )
+
+        # Energy depletion penalty
+        if self.energy <= 0:
+            reward.energy = self.config.energy_depletion_penalty
+
         # Update position if movement happened
         if (new_x, new_y) != (self.agent_x, self.agent_y):
             self.agent_x, self.agent_y = new_x, new_y
@@ -205,10 +218,7 @@ class GameEngine:
         # Apply hazard damage
         damage = self._apply_hazard()
         reward.hazard_damage = damage * self.config.hazard_damage_penalty
-        # Energy penalty if exhausted
-        if self.energy <= 0:
-            reward.energy_penalty = self.config.low_energy_penalty
-
+        
         # Apply time penalty
         reward.time_cost = self.config.time_penalty_per_step
         
@@ -221,9 +231,22 @@ class GameEngine:
                         self.config.max_hazard_probability,
                         cell.hazard_probability + self.config.hazard_degradation_per_step
                     )
-        
+        self.energy = max(0, self.energy)
+
+        # Hierarchical reward shaping
+        self.current_goal = self.select_high_level_goal()
+
+        if self.current_goal == HighLevelGoal.RECOVER_ENERGY:
+            reward.energy += 1.0 if action == Action.WAIT else -0.2
+
+        elif self.current_goal == HighLevelGoal.COLLECT:
+            reward.signal_collection *= 1.5
+
+        elif self.current_goal == HighLevelGoal.SURVIVE:
+            reward.hazard_damage *= 2.0
+
         # Check termination
-        terminated = self.health <= 0 or self.time_remaining <= 0
+        terminated = (self.health <= 0 or self.time_remaining <= 0 or self.energy <= 0)
         
         # Generate observation
         observation = self._get_observation()
@@ -268,7 +291,7 @@ class GameEngine:
             self.agent_y / self.config.grid_height,
             self.health / self.config.max_health,
             self.time_remaining / self.config.time_budget,
-            self.energy / self.config.max_energy
+            self.energy / self.config.max_energy,   # NEW
 
         ], dtype=np.float32)
         
@@ -282,6 +305,8 @@ class GameEngine:
         self.time_remaining = self.config.time_budget
         self.episode_step = 0
         self.visited_cells = set()
+        self.energy = self.config.initial_energy
+
         self._generate_world()
         return self._get_observation()
     
@@ -307,4 +332,3 @@ class GameEngine:
                     print(".", end=" ")
             print()
         print("=" * 60)
-   
