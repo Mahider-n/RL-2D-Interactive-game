@@ -291,7 +291,7 @@ class GameEngine:
             self.agent_y / self.config.grid_height,
             self.health / self.config.max_health,
             self.time_remaining / self.config.time_budget,
-            self.energy / self.config.max_energy,   # NEW
+            self.energy / self.config.max_energy,   
 
         ], dtype=np.float32)
         
